@@ -37,8 +37,7 @@ DEFAULT_ARGS = {
 }
 
 
-curve_txt2img = None
-curve_img2img = None
+curves = {}
 stats_file = os.path.join(scripts.basedir(), "stats.json")
 
 
@@ -87,7 +86,7 @@ class VRAMCurve():
 
 
 def load_curve():
-    global curve_txt2img, curve_img2img
+    global curves
     if not os.path.isfile(stats_file):
         print("[VRAMEstimator] No stats available, run benchmark first")
         return None, None
@@ -95,12 +94,14 @@ def load_curve():
     with open(stats_file, "r", encoding="utf-8") as f:
         data = json.load(f)
 
-    if "txt2img" not in data or "img2img" not in data:
+    if "txt2img" not in data or "txt2img_hr" not in data or "txt2img_hr_latent" not in data or "img2img" not in data:
         print("[VRAMEstimator] No stats available, run benchmark first")
         return None, None
 
-    curve_txt2img = VRAMCurve(data["txt2img"])
-    curve_img2img = VRAMCurve(data["img2img"])
+    curves = {}
+    for k, v in data.items():
+        curves[k] = VRAMCurve(v)
+
     print("[VRAMEstimator] Loaded benchmark data.")
     return make_plots(data)
 
@@ -113,7 +114,7 @@ def get_memory_stats():
 
 
 def run_benchmark(max_width, max_batch_count):
-    global curve_txt2img, curve_img2img
+    global curves
     results = {}
 
     print("[VRAMEstimator] Starting benchmark...")
@@ -126,7 +127,7 @@ def run_benchmark(max_width, max_batch_count):
     shared.state.job = "VRAM Estimator Benchmark"
     shared.state.job_count = max_batch_count * int((max_width - 256) / 64)
 
-    for op in ["txt2img", "img2img"]:
+    for op in ["txt2img", "txt2img_hr", "txt2img_hr_latent", "img2img"]:
         results[op] = []
         for b in range(1, max_batch_count+1):
             for i in range(256, max_width+64, 64):
@@ -138,12 +139,26 @@ def run_benchmark(max_width, max_batch_count):
 
                 args = DEFAULT_ARGS.copy()
                 args["batch_size"] = b
-                args["width"] = i
-                args["height"] = i
 
                 if op == "txt2img":
+                    args["width"] = i
+                    args["height"] = i
+                    p = StableDiffusionProcessingTxt2Img(**args)
+                elif op.startswith("txt2img_hr"):
+                    args["width"] = int(i / 2)
+                    args["height"] = int(i / 2)
+                    args["enable_hr"] = True
+                    args["hr_second_pass_steps"] = 1
+                    args["hr_resize_x"] = i
+                    args["hr_resize_y"] = i
+                    if op == "txt2img_hr_latent":
+                        args["hr_upscaler"] = "Latent"
+                    else:
+                        args["hr_upscaler"] = "Lanczos"
                     p = StableDiffusionProcessingTxt2Img(**args)
                 elif op == "img2img":
+                    args["width"] = i
+                    args["height"] = i
                     args["init_images"] = [Image.new("RGB", (512, 512))]
                     p = StableDiffusionProcessingImg2Img(**args)
                 else:
@@ -155,7 +170,9 @@ def run_benchmark(max_width, max_batch_count):
                     process_images(p)
                 except Exception as e:
                     print(f'benchmark error: {e}')
-                    return 'error'
+                    shared.state.end()
+                    break
+
                 t1 = time.time()
                 shared.state.end()
 
@@ -163,8 +180,8 @@ def run_benchmark(max_width, max_batch_count):
 
                 mem_stats = {k: -(v//-(1024*1024)) for k, v in shared.mem_mon.stop().items()}
                 results[op].append({
-                    "width": args["width"],
-                    "pixels": args["width"] * args["height"],
+                    "width": i,
+                    "pixels": i * i,
                     "batch_size": args["batch_size"],
                     "active_peak": mem_stats["active_peak"] - base_active,
                     "reserved_peak": mem_stats["reserved_peak"] - base_reserved,
@@ -179,8 +196,9 @@ def run_benchmark(max_width, max_batch_count):
                 del p
                 del args
 
-    curve_txt2img = VRAMCurve(results["txt2img"])
-    curve_img2img = VRAMCurve(results["img2img"])
+    curves = {}
+    for k, v in results.items():
+        curves[k] = VRAMCurve(v)
 
     shared.state.end()
     print("[VRAMEstimator] Benchmark finished.")
@@ -193,21 +211,18 @@ def run_benchmark(max_width, max_batch_count):
 def make_plots(results):
     dfs = []
 
-    for op in ["txt2img", "img2img"]:
+    for op in ["txt2img", "txt2img_hr", "txt2img_hr_latent", "img2img"]:
         x = []
         y = []
         z = []
-        w = []
 
         for result in results[op]:
             x.append(result["pixels"])
-            y.append(result["batch_size"])
-            z.append(result["reserved_peak"])
-            w.append(result["its"])
+            y.append(result["reserved_peak"])
+            z.append(result["batch_size"])
 
-        df = pd.DataFrame({"pixels": x, "reserved_peak": z, "batch_size": y})
-        df2 = pd.DataFrame({"pixels": x, "its": w, "batch_size": y})
-        dfs.extend([df, df2])
+        df = pd.DataFrame({"pixels": x, "reserved_peak": y, "batch_size": z})
+        dfs.append(df)
 
     return dfs
 
@@ -218,10 +233,10 @@ def on_ui_tabs():
     with gr.Blocks(analytics_enabled=False) as vram_estimator_tab:
         with gr.Row():
             plot = gr.LinePlot(title="txt2img Reserved VRAM", x="pixels", y="reserved_peak", color="batch_size", width=400, height=400, tooltip=["pixels", "reserved_peak", "batch_size"])
-            plot2 = gr.LinePlot(title="txt2img it/s", x="pixels", y="its", color="batch_size", width=400, height=400, tooltip=["pixels", "its", "batch_size"])
+            plot2 = gr.LinePlot(title="txt2img Highres Fix Reserved VRAM", x="pixels", y="reserved_peak", color="batch_size", width=400, height=400, tooltip=["pixels", "reserved_peak", "batch_size"])
         with gr.Row():
-            plot3 = gr.LinePlot(title="img2img Reserved VRAM", x="pixels", y="reserved_peak", color="batch_size", width=400, height=400, tooltip=["pixels", "reserved_peak", "batch_size"])
-            plot4 = gr.LinePlot(title="img2img it/s", x="pixels", y="its", color="batch_size", width=400, height=400, tooltip=["pixels", "its", "batch_size"])
+            plot3 = gr.LinePlot(title="txt2img Highres Fix (Latent) Reserved VRAM", x="pixels", y="reserved_peak", color="batch_size", width=400, height=400, tooltip=["pixels", "reserved_peak", "batch_size"])
+            plot4 = gr.LinePlot(title="img2img Reserved VRAM", x="pixels", y="reserved_peak", color="batch_size", width=400, height=400, tooltip=["pixels", "reserved_peak", "batch_size"])
         with gr.Row():
             width = gr.Slider(minimum=256, maximum=2048, step=64, label="Max Image Size", value=1024)
             batch_count = gr.Slider(minimum=1, maximum=16, step=1, label="Max Batch Count", value=8)
@@ -283,9 +298,9 @@ def make_span(reserved_vram_estimate):
     '''
 
 
-def estimate_vram_txt2img(width, height, batch_size, enable_hr, hr_scale, hr_resize_x, hr_resize_y):
-    global curve_txt2img
-    if not curve_txt2img:
+def estimate_vram_txt2img(width, height, batch_size, enable_hr, hr_upscaler, hr_scale, hr_resize_x, hr_resize_y):
+    global curves
+    if "txt2img" not in curves or "txt2img_hr" not in curves:
         return "<span>(No stats yet, run benchmark in VRAM Estimator tab)</span>"
 
     final_width = width
@@ -313,16 +328,28 @@ def estimate_vram_txt2img(width, height, batch_size, enable_hr, hr_scale, hr_res
                     final_width = hr_resize_y * width // height
                     final_height = hr_resize_y
 
-    vram_estimate = curve_txt2img.estimate(final_width * final_height, batch_size)
+        if hr_upscaler in shared.latent_upscale_modes:
+            upscaler_curve = "txt2img_hr_latent"
+        else:
+            upscaler_curve = "txt2img_hr"
+        print(hr_upscaler)
+        print(upscaler_curve)
+
+        vram_estimate_normal = curves["txt2img"].estimate(final_width * final_height, batch_size)
+        vram_estimate_hr = curves[upscaler_curve].estimate(final_width * final_height, batch_size)
+        vram_estimate = max(vram_estimate_normal, vram_estimate_hr)
+    else:
+        vram_estimate = curves["txt2img"].estimate(final_width * final_height, batch_size)
+
     return make_span(vram_estimate)
 
 
 def estimate_vram_img2img(width, height, batch_size):
-    global curve_img2img
-    if not curve_img2img:
+    global curves
+    if "img2img" not in curves:
         return "<span>(No stats yet, run benchmark in VRAM Estimator tab)</span>"
 
-    vram_estimate = curve_img2img.estimate(width * height, batch_size)
+    vram_estimate = curves["img2img"].estimate(width * height, batch_size)
     return make_span(vram_estimate)
 
 
@@ -342,7 +369,7 @@ class Script(scripts.Script):
             inputs = [self.i2i_width, self.i2i_height, self.i2i_batch_size]
             fn = estimate_vram_img2img
         else:
-            inputs = [self.t2i_width, self.t2i_height, self.t2i_batch_size, self.t2i_enable_hr, self.t2i_hr_scale, self.t2i_hr_resize_x, self.t2i_hr_resize_y]
+            inputs = [self.t2i_width, self.t2i_height, self.t2i_batch_size, self.t2i_enable_hr, self.t2i_hr_upscaler, self.t2i_hr_scale, self.t2i_hr_resize_x, self.t2i_hr_resize_y]
             fn = estimate_vram_txt2img
 
         for input in inputs:
@@ -362,6 +389,7 @@ class Script(scripts.Script):
         elif elem_id == "txt2img_height":       self.t2i_height = component
         elif elem_id == "txt2img_batch_size":   self.t2i_batch_size = component
         elif elem_id == "txt2img_enable_hr":    self.t2i_enable_hr = component
+        elif elem_id == "txt2img_hr_upscaler":  self.t2i_hr_upscaler = component
         elif elem_id == "txt2img_hr_scale":     self.t2i_hr_scale = component
         elif elem_id == "txt2img_hr_resize_x":  self.t2i_hr_resize_x = component
         elif elem_id == "txt2img_hr_resize_y":  self.t2i_hr_resize_y = component
