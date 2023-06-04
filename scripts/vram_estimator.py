@@ -18,25 +18,6 @@ import gradio as gr
 import pandas as pd
 
 
-DEFAULT_ARGS = {
-    'sd_model': shared.sd_model,
-    'prompt': 'postapocalyptic steampunk city, exploration, cinematic, realistic, hyper detailed, photorealistic maximum detail, volumetric light, (((focus))), wide-angle, (((brightly lit))), (((vegetation))), lightning, vines, destruction, devastation, wartorn, ruins',
-    'sampler_name': 'Euler a',
-    'batch_size': 1,
-    'n_iter': 1,
-    'steps': 1,
-    'cfg_scale': 15.0,
-    'width': 512,
-    'height': 512,
-    'restore_faces': False,
-    'tiling': False,
-    'do_not_save_samples': True,
-    'do_not_save_grid': True,
-    'negative_prompt': '(((blurry))), ((foggy)), (((dark))), ((monochrome)), sun, (((depth of field)))',
-    'do_not_reload_embeddings': True
-}
-
-
 curves = {}
 stats_file = os.path.join(scripts.basedir(), "stats.json")
 
@@ -115,6 +96,23 @@ def get_memory_stats():
 
 def run_benchmark(max_width, max_batch_count):
     global curves
+    DEFAULT_ARGS = {
+        'sd_model': shared.sd_model,
+        'prompt': 'postapocalyptic steampunk city, exploration, cinematic, realistic, hyper detailed, photorealistic maximum detail, volumetric light, (((focus))), wide-angle, (((brightly lit))), (((vegetation))), lightning, vines, destruction, devastation, wartorn, ruins',
+        'sampler_name': 'Euler a',
+        'batch_size': 1,
+        'n_iter': 1,
+        'steps': 1,
+        'cfg_scale': 15.0,
+        'width': 512,
+        'height': 512,
+        'restore_faces': False,
+        'tiling': False,
+        'do_not_save_samples': True,
+        'do_not_save_grid': True,
+        'negative_prompt': '(((blurry))), ((foggy)), (((dark))), ((monochrome)), sun, (((depth of field)))',
+        'do_not_reload_embeddings': True
+    }
     results = {}
 
     print("[VRAMEstimator] Starting benchmark...")
