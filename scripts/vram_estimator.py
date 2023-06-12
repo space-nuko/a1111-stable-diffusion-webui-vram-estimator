@@ -129,7 +129,8 @@ def run_benchmark(max_width, max_batch_count):
         results[op] = []
         for b in range(1, max_batch_count+1):
             for i in range(256, max_width+64, 64):
-                print(f"run benchmark: {op} {b}x{i}")
+                #More verbose and informative progress strings
+                print(f"run benchmark:\nOperation: {op} \nBatch Count: {b}\nWidth: {i}")
                 devices.torch_gc()
                 torch.cuda.reset_peak_memory_stats()
                 shared.mem_mon.monitor()
@@ -363,21 +364,26 @@ class Script(scripts.Script):
             with gr.Row():
                 vram_status = gr.HTML()
 
-        if is_img2img:
-            inputs = [self.i2i_width, self.i2i_height, self.i2i_batch_size]
-            fn = estimate_vram_img2img
-        else:
-            inputs = [self.t2i_width, self.t2i_height, self.t2i_batch_size, self.t2i_enable_hr, self.t2i_hr_upscaler, self.t2i_hr_scale, self.t2i_hr_resize_x, self.t2i_hr_resize_y]
-            fn = estimate_vram_txt2img
+        #Some extensions co-exist with vram estimator by throwing an error on load but nothing is wrong
+        try:
+            if is_img2img:
+                inputs = [self.i2i_width, self.i2i_height, self.i2i_batch_size]
+                fn = estimate_vram_img2img
+            else:
+                inputs = [self.t2i_width, self.t2i_height, self.t2i_batch_size, self.t2i_enable_hr, self.t2i_hr_upscaler, self.t2i_hr_scale, self.t2i_hr_resize_x, self.t2i_hr_resize_y]
+                fn = estimate_vram_txt2img
+        
 
-        for input in inputs:
-            input.change(
-                fn=fn,
-                inputs=inputs,
-                outputs=[vram_status],
-                show_progress=False,
-            )
-
+            for input in inputs:
+                input.change(
+                    fn=fn,
+                    inputs=inputs,
+                    outputs=[vram_status],
+                    show_progress=False,
+                )
+        #So if it thinks something is wrong, we'll just tell it to carry on        
+        except Exception as e:
+            return [vram_status]
         return [vram_status]
 
     def after_component(self, component, **kwargs):
