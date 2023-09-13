@@ -240,8 +240,8 @@ def on_ui_tabs():
             width = gr.Slider(minimum=256, maximum=2048, step=64, label="Max Image Size", value=1024)
             batch_count = gr.Slider(minimum=1, maximum=16, step=1, label="Max Batch Count", value=8)
             with gr.Column():
-                bench_run_btn = gr.Button("Run benchmark", variant="primary").style(full_width=False)
-                load_results_button = gr.Button("Load results").style(full_width=False)
+                bench_run_btn = gr.Button("Run benchmark", variant="primary", scale=1)
+                load_results_button = gr.Button("Load results", scale=1)
                 with gr.Row():
                     status = gr.HTML("")
 
